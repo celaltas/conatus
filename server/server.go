@@ -15,7 +15,7 @@ const (
 )
 
 func main() {
-	fd, _ := syscall.Socket(syscall.AF_INET, syscall.O_NONBLOCK|syscall.SOCK_STREAM, 0)
+	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	syscall.Bind(fd, &syscall.SockaddrInet4{
 		Port: SERVER_PORT,
 		Addr: [4]byte{127, 0, 0, 1},
@@ -51,6 +51,7 @@ func main() {
 			events = append(events, pfd)
 		}
 		n, err := unix.Poll(events, -1)
+		log.Println("Polling for connections....")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -110,3 +111,5 @@ func tryOneRequest(conn *Connection) bool {
 	StateRes(conn)
 	return conn.state == STATE_REQ
 }
+
+

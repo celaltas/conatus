@@ -25,10 +25,10 @@ func main() {
 
 	query(connection, "Mens sana in corpore sano")
 	fmt.Println("first request send")
-    time.Sleep(2 * time.Second) 
+    time.Sleep(5 * time.Second) 
 	query(connection, "Amor vincit omnia")
 	fmt.Println("second request send")
-    time.Sleep(2 * time.Second) 
+    time.Sleep(5 * time.Second) 
 	query(connection, "De gustibus non est disputandum")
 	fmt.Println("third request send")
 	

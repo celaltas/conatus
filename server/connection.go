@@ -44,6 +44,7 @@ func ConnectionPut(connections map[int32]*Connection, connection *Connection) {
 
 func acceptNewConnection(connections map[int32]*Connection, fd int) error {
 	connfd, _, err := syscall.Accept(fd)
+	setNonBlocking(connfd)
 	if err != nil {
 		return fmt.Errorf("error when accept connection: %s", err.Error())
 	}
@@ -140,4 +141,20 @@ func TryFlushBuffer(conn *Connection) bool {
 	return true
 
 
+}
+
+func setNonBlocking(fd int) error {
+    flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
+    if err != 0 {
+        return err
+    }
+
+    flags |= syscall.O_NONBLOCK
+
+    _, _, err = syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, flags)
+    if err != 0 {
+        return err
+    }
+
+    return nil
 }
