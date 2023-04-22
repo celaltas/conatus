@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"flag"
 	"fmt"
 	"net"
-	"time"
 )
 
 const (
@@ -18,20 +18,20 @@ const (
 
 func main() {
 
+	flag.Parse()
 	connection, err := net.Dial(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT_C)
 	if err != nil {
 		panic(err)
 	}
 
-	query(connection, "Mens sana in corpore sano")
-	fmt.Println("first request send")
-    time.Sleep(5 * time.Second) 
-	query(connection, "Amor vincit omnia")
-	fmt.Println("second request send")
-    time.Sleep(5 * time.Second) 
-	query(connection, "De gustibus non est disputandum")
-	fmt.Println("third request send")
-	
+	if err := sendRequest(connection, flag.Args()); err != nil {
+		fmt.Println(err)
+	}
+
+	if err := readResponse(connection); err != nil {
+		fmt.Println(err)
+	}
+
 	defer connection.Close()
 
 }
@@ -69,34 +69,50 @@ func readFull(connection net.Conn, buffer []byte, length uint32) error {
 
 }
 
-func query(connection net.Conn, message string) error {
+func sendRequest(connection net.Conn, cmd []string) error {
 
-	if len(message) > messageLimit {
-		return errors.New("message too long")
+	var length uint32 = 4
+	for _, s := range cmd {
+		length += 4 + uint32(len(s))
 	}
-
-	writeBuffer := make([]byte, messageHeaderLength+messageLimit)
-	binary.LittleEndian.PutUint32(writeBuffer[0:], uint32(len(message)))
-	copy(writeBuffer[messageHeaderLength:], []byte(message))
-	if err := writeAll(connection, writeBuffer, uint32(messageHeaderLength+len(message))); err != nil {
-		return err
-	}
-
-	messageLength := make([]byte, messageHeaderLength)
-	if err := readFull(connection, messageLength, messageHeaderLength); err != nil {
-		return err
-	}
-	length := binary.LittleEndian.Uint32(messageLength)
 	if length > messageLimit {
 		return errors.New("message too large")
 	}
-	messageContent := make([]byte, messageLimit)
-	err := readFull(connection, messageContent, length)
-	if err != nil {
-		return errors.New("error when reading message")
+
+	buf := make([]byte, messageHeaderLength+messageLimit)
+	binary.LittleEndian.PutUint32(buf[:4], length)
+	binary.LittleEndian.PutUint32(buf[4:8], uint32(len(cmd)))
+
+	cur := 8
+	for _, s := range cmd {
+		p := uint32(len(s))
+		binary.LittleEndian.PutUint32(buf[cur:cur+4], p)
+		copy(buf[cur+4:cur+4+int(p)], []byte(s))
+		cur += 4 + int(p)
 	}
-	fmt.Printf("Server says: %s\n", string(messageContent))
+	fmt.Println("write buffer:", buf)
 
+	return writeAll(connection, buf, 4+length)
+
+}
+
+func readResponse(conn net.Conn) error {
+	rbuf := make([]byte, messageHeaderLength+messageLimit)
+	if err := readFull(conn, rbuf, messageHeaderLength); err != nil {
+		return err
+	}
+	length := binary.LittleEndian.Uint32(rbuf[:messageHeaderLength])
+	if length > messageLimit {
+		return errors.New("message too large")
+	}
+	if err := readFull(conn, rbuf[messageHeaderLength+4:], length); err != nil {
+		return err
+	}
+	rescode := binary.LittleEndian.Uint32(rbuf[4:8])
+	if length < 4 {
+		return errors.New("bad response")
+	}
+
+	fmt.Printf("server says: [%d] %s\n", rescode, rbuf[8:])
 	return nil
-
 }

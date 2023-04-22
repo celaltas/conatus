@@ -85,7 +85,6 @@ func TryFillBuffer(conn *Connection) bool {
 		return false
 	}
 
-
 	if rv == 0 {
 		if conn.readBufferSize > 0 {
 			log.Println("error while reading from connection unexpected eof")
@@ -140,21 +139,20 @@ func TryFlushBuffer(conn *Connection) bool {
 	}
 	return true
 
-
 }
 
 func setNonBlocking(fd int) error {
-    flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
-    if err != 0 {
-        return err
-    }
+	flags, _, err := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
+	if err != 0 {
+		return err
+	}
 
-    flags |= syscall.O_NONBLOCK
+	flags |= syscall.O_NONBLOCK
 
-    _, _, err = syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, flags)
-    if err != 0 {
-        return err
-    }
+	_, _, err = syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_SETFL, flags)
+	if err != 0 {
+		return err
+	}
 
-    return nil
+	return nil
 }
