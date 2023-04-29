@@ -3,10 +3,8 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"log"
 	"syscall"
-
 	"golang.org/x/sys/unix"
 )
 
@@ -24,7 +22,7 @@ const (
 	RES_NX
 )
 
-var gMap = make(map[string]string) 
+var gmap *gMap
 
 func main() {
 	fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
@@ -36,6 +34,8 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	gmap = InitMap()
+
 	defer syscall.Close(fd)
 	log.Println("Waiting for client...")
 	connections := make(map[int32]*Connection)
@@ -110,7 +110,6 @@ func tryOneRequest(conn *Connection) bool {
 	var responseCode int = 0
 	var responseLenght uint32 = 0
 
-
 	if err := doRequest(conn.readBuffer[messageHeaderLength:], length, &responseCode, conn.writeBuffer[messageHeaderLength+4:], &responseLenght); err != nil {
 		log.Println(err)
 		conn.state = STATE_END
@@ -156,16 +155,15 @@ func doRequest(request []byte, requestLength uint32, responseCode *int, response
 
 func parseRequest(request []byte, requestLength uint32, cmd *[]string) error {
 
-	if requestLength<=4{
+	if requestLength <= 4 {
 		return errors.New("empty request")
 	}
 
-
 	length := binary.LittleEndian.Uint32(request[:messageHeaderLength])
-	
+
 	var position uint32 = 4
 	for length > 0 {
-		
+
 		if position+4 > requestLength {
 			return errors.New("error when trying to parse message")
 		}
@@ -185,25 +183,45 @@ func parseRequest(request []byte, requestLength uint32, cmd *[]string) error {
 }
 
 func doGet(cmd []string, response []byte, responseLength *uint32) int {
-	item, ok := gMap[cmd[1]]
-	if !ok {
+
+	entry := new(Entry)
+	entry.key = cmd[1]
+	entry.node.hCode = hashFunction(entry.key)
+	node := gmap.db.lookupNode(entry.node, nodeComparer)
+	if node == nil {
 		return int(RES_NX)
 	}
-	if len(item) > messageLimit {
+	value := getEntry(node).value
+	if len(value) > messageLimit {
 		log.Println("Message too long")
 	}
-	copy(response, []byte(item))
-	*responseLength = uint32(len(item))
+	copy(response, []byte(value))
+	*responseLength = uint32(len(value))
 	return int(RES_OK)
 }
 
 func doSet(cmd []string, response []byte, responseLength *uint32) int {
-	gMap[cmd[1]] = cmd[2]
-	fmt.Println("gmap:", gMap)
+
+	entry := new(Entry)
+	entry.key = cmd[1]
+	entry.node.hCode = hashFunction(entry.key)
+	node := gmap.db.lookupNode(entry.node, nodeComparer)
+	if node != nil {
+		getEntry(node).value = cmd[2]
+	} else {
+		ent := new(Entry)
+		ent.key = entry.key
+		ent.node.hCode = entry.node.hCode
+		ent.value = cmd[2]
+		gmap.db.insert(ent.node)
+	}
 	return int(RES_OK)
 }
 
 func doDel(cmd []string, response []byte, responseLength *uint32) int {
-	delete(gMap, cmd[1])
+	entry := new(Entry)
+	entry.key = cmd[1]
+	entry.node.hCode = hashFunction(entry.key)
+	gmap.db.pop(entry.node, nodeComparer)
 	return int(RES_OK)
 }
