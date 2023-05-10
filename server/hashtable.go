@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"unsafe"
+	"fmt"
 )
 
 const (
@@ -15,6 +15,8 @@ type Comparer func(first *HNode, second *HNode) bool
 type HNode struct {
 	next  *HNode
 	hCode uint64
+	key   string
+	value string
 }
 
 type HTable struct {
@@ -29,22 +31,21 @@ type HMap struct {
 	resizingPos uint
 }
 
-type Entry struct {
-	node  *HNode
-	key   string
-	value string
-}
+
 
 type gMap struct {
 	db *HMap
 }
 
-func getEntry(node *HNode) *Entry {
-    offset := uintptr(unsafe.Pointer(Entry{}.node)) - uintptr(unsafe.Pointer(&Entry{}))
-    entryPtr := unsafe.Pointer(uintptr(unsafe.Pointer(node)) - offset)
-    return (*Entry)(entryPtr)
-}
 
+func newNode(key, value string) *HNode {
+	return &HNode{
+		next: nil,
+		hCode: hashFunction(key),
+		key: key,
+		value: value,
+	}
+}
 
 func InitMap() *gMap {
 	return &gMap{
@@ -57,7 +58,7 @@ func InitMap() *gMap {
 }
 
 func nodeComparer(first *HNode, second *HNode) bool {
-	return first == second
+	return (first.key == second.key && first.hCode==second.hCode)
 }
 
 func initHasTable(n uint) (*HTable, error) {
@@ -81,8 +82,7 @@ func (table *HTable) insertNode(node *HNode) {
 }
 
 func (table *HTable) lookupNode(key *HNode, comparer Comparer) *HNode {
-
-	if table.size == 0 {
+	if table == nil {
 		return nil
 	}
 	pos := key.hCode & uint64(table.mask)
@@ -97,11 +97,35 @@ func (table *HTable) lookupNode(key *HNode, comparer Comparer) *HNode {
 
 }
 
-func (table *HTable) detachNode(from *HNode) *HNode {
-	node := from
-	from = from.next
-	table.size--
-	return node
+
+
+
+func (table *HTable) detachNode(node *HNode) *HNode {
+	pos := node.hCode & uint64(table.mask)
+	if table.tab[pos] == nil {
+		return nil
+	}
+
+	// check the first node
+	headNode := table.tab[pos]
+	if nodeComparer(headNode, node){
+		table.tab[pos] = headNode.next
+		table.size --
+		return headNode
+	}
+
+
+	// look for the node in the linked list
+	previousNode := table.tab[pos]
+	for currentNode := previousNode.next; currentNode != nil; currentNode = currentNode.next {
+		if nodeComparer(currentNode, node) {
+			previousNode.next = currentNode.next
+			table.size --
+			return currentNode
+		}
+		previousNode = currentNode
+	}
+	return nil
 }
 
 func (hm *HMap) lookupNode(key *HNode, comparer Comparer) *HNode {
@@ -149,6 +173,7 @@ func (hm *HMap) insert(node *HNode) {
 		}
 	}
 	hm.resizingHelper()
+
 }
 
 func (hm *HMap) startResize() {
@@ -168,6 +193,7 @@ func (hm *HMap) startResize() {
 func (hm *HMap) pop(key *HNode, comparer Comparer) *HNode {
 	hm.resizingHelper()
 	from := hm.firstTab.lookupNode(key, comparer)
+	fmt.Printf("node: %v found in the first table %v:\n", key, hm.firstTab)
 	if from != nil {
 		return hm.firstTab.detachNode(from)
 	}
@@ -179,12 +205,18 @@ func (hm *HMap) pop(key *HNode, comparer Comparer) *HNode {
 
 }
 
-func hashFunction(key string) uint64 {
-	var sum uint64 = 0
-	var factor uint64 = 31
-	for index, s := range key {
-		sum = (sum + (uint64(index) * factor * uint64(s)))
-		factor *= factor
-	}
-	return sum
+
+func hashFunction(key string) (hash uint64) {
+    hash = 0
+    for _, ch := range key {
+        hash += uint64(ch)
+        hash += hash << 10
+        hash ^= hash >> 6
+    }
+
+    hash += hash << 3
+    hash ^= hash >> 11
+    hash += hash << 15
+
+    return
 }

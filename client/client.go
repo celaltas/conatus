@@ -23,15 +23,12 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-
 	if err := sendRequest(connection, flag.Args()); err != nil {
 		fmt.Println(err)
 	}
-
 	if err := readResponse(connection); err != nil {
 		fmt.Println(err)
 	}
-
 	defer connection.Close()
 
 }
@@ -90,8 +87,6 @@ func sendRequest(connection net.Conn, cmd []string) error {
 		copy(buf[cur+4:cur+4+int(p)], []byte(s))
 		cur += 4 + int(p)
 	}
-	fmt.Println("write buffer:", buf)
-
 	return writeAll(connection, buf, 4+length)
 
 }

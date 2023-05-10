@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"log"
 	"syscall"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -184,44 +186,34 @@ func parseRequest(request []byte, requestLength uint32, cmd *[]string) error {
 
 func doGet(cmd []string, response []byte, responseLength *uint32) int {
 
-	entry := new(Entry)
-	entry.key = cmd[1]
-	entry.node.hCode = hashFunction(entry.key)
-	node := gmap.db.lookupNode(entry.node, nodeComparer)
-	if node == nil {
+	node := newNode(cmd[1], "")
+	found := gmap.db.lookupNode(node, nodeComparer)
+	if found == nil {
 		return int(RES_NX)
 	}
-	value := getEntry(node).value
-	if len(value) > messageLimit {
+	if len(found.value) > messageLimit {
 		log.Println("Message too long")
 	}
-	copy(response, []byte(value))
-	*responseLength = uint32(len(value))
+	copy(response, []byte(found.value))
+	*responseLength = uint32(len(found.value))
 	return int(RES_OK)
 }
 
 func doSet(cmd []string, response []byte, responseLength *uint32) int {
 
-	entry := new(Entry)
-	entry.key = cmd[1]
-	entry.node.hCode = hashFunction(entry.key)
-	node := gmap.db.lookupNode(entry.node, nodeComparer)
-	if node != nil {
-		getEntry(node).value = cmd[2]
+	node := newNode(cmd[1], "")
+	found := gmap.db.lookupNode(node, nodeComparer)
+	if found != nil {
+		found.value = cmd[2]
 	} else {
-		ent := new(Entry)
-		ent.key = entry.key
-		ent.node.hCode = entry.node.hCode
-		ent.value = cmd[2]
-		gmap.db.insert(ent.node)
+		gmap.db.insert(newNode(cmd[1], cmd[2]))
 	}
 	return int(RES_OK)
 }
 
 func doDel(cmd []string, response []byte, responseLength *uint32) int {
-	entry := new(Entry)
-	entry.key = cmd[1]
-	entry.node.hCode = hashFunction(entry.key)
-	gmap.db.pop(entry.node, nodeComparer)
+	node := newNode(cmd[1], "")
+	deletedNode:=gmap.db.pop(node, nodeComparer)
+	fmt.Printf("deleted node:%v\n", deletedNode)
 	return int(RES_OK)
 }
