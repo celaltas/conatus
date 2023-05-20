@@ -31,10 +31,10 @@ func NewConnection(fd int) *Connection {
 		fd:              fd,
 		state:           STATE_REQ,
 		readBufferSize:  0,
-		readBuffer:      make([]byte, messageHeaderLength+messageLimit),
+		readBuffer:      make([]byte, MESSAGE_HEADER_LENGTH+MESSAGE_LIMIT),
 		writeBufferSize: 0,
 		writeBufferSent: 0,
-		writeBuffer:     make([]byte, messageHeaderLength+messageLimit),
+		writeBuffer:     make([]byte, MESSAGE_HEADER_LENGTH+MESSAGE_LIMIT),
 	}
 }
 

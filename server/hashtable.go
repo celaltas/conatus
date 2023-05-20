@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 )
 
 const (
@@ -11,6 +10,7 @@ const (
 )
 
 type Comparer func(first *HNode, second *HNode) bool
+type ScanFunc func(node *HNode, out *string)
 
 type HNode struct {
 	next  *HNode
@@ -60,6 +60,9 @@ func InitMap() *gMap {
 func nodeComparer(first *HNode, second *HNode) bool {
 	return (first.key == second.key && first.hCode==second.hCode)
 }
+func cbScan(node *HNode, out *string) {
+	outStr(out,node.key)
+}
 
 func initHasTable(n uint) (*HTable, error) {
 	if n > 0 && ((n-1)&n != 0) {
@@ -97,7 +100,18 @@ func (table *HTable) lookupNode(key *HNode, comparer Comparer) *HNode {
 
 }
 
-
+func (table *HTable) hmapScan(cbScan ScanFunc, out *string) {
+	if table == nil {
+		return
+	}
+	for i:=0;i<int((table.mask+1));i++ {
+		node:=table.tab[i]
+		for node!=nil{
+			cbScan(node,out)
+			node = node.next
+		}
+	}
+}
 
 
 func (table *HTable) detachNode(node *HNode) *HNode {
@@ -193,7 +207,6 @@ func (hm *HMap) startResize() {
 func (hm *HMap) pop(key *HNode, comparer Comparer) *HNode {
 	hm.resizingHelper()
 	from := hm.firstTab.lookupNode(key, comparer)
-	fmt.Printf("node: %v found in the first table %v:\n", key, hm.firstTab)
 	if from != nil {
 		return hm.firstTab.detachNode(from)
 	}
@@ -203,6 +216,17 @@ func (hm *HMap) pop(key *HNode, comparer Comparer) *HNode {
 	}
 	return nil
 
+}
+
+func (hm *HMap) hmapSize() uint {
+	size := uint(0)
+	if hm.firstTab != nil {
+		size += hm.firstTab.size
+	}
+	if hm.secondTab != nil {
+		size += hm.secondTab.size
+	}
+	return size
 }
 
 

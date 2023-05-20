@@ -3,25 +3,39 @@ package main
 import (
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"log"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
 
-const (
-	SERVER_PORT         = 9988
-	messageLimit        = 4096
-	messageHeaderLength = 4
-)
-
 type ResponseCode int
+type SerializationCode int
+type ErrorTypeCode int32
+
+const (
+	SERVER_PORT           = 9988
+	MESSAGE_LIMIT         = 4096
+	MESSAGE_HEADER_LENGTH = 4
+)
 
 const (
 	RES_OK ResponseCode = iota
 	RES_ERR
 	RES_NX
+)
+
+const (
+	SER_NIL SerializationCode = iota
+	SER_ERR
+	SER_STR
+	SER_INT
+	SER_ARR
+)
+
+const (
+	ERR_UNKNOWN ErrorTypeCode = iota
+	ERR_2BIG
 )
 
 var gmap *gMap
@@ -96,76 +110,72 @@ func main() {
 }
 
 func tryOneRequest(conn *Connection) bool {
-	if conn.readBufferSize < messageHeaderLength {
+	if conn.readBufferSize < MESSAGE_HEADER_LENGTH {
 		return false
 	}
-	length := binary.LittleEndian.Uint32(conn.readBuffer[:messageHeaderLength])
-	if length > messageLimit {
+	length := binary.LittleEndian.Uint32(conn.readBuffer[:MESSAGE_HEADER_LENGTH])
+	if length > MESSAGE_LIMIT {
 		log.Println("message too long")
 		conn.state = STATE_END
 		return false
 	}
-	if messageHeaderLength+length > uint32(conn.readBufferSize) {
+	if MESSAGE_HEADER_LENGTH+length > uint32(conn.readBufferSize) {
 		return false
 	}
-
-	var responseCode int = 0
-	var responseLenght uint32 = 0
-
-	if err := doRequest(conn.readBuffer[messageHeaderLength:], length, &responseCode, conn.writeBuffer[messageHeaderLength+4:], &responseLenght); err != nil {
+	cmd := make([]string, 0)
+	if err := parseRequest(conn.readBuffer[MESSAGE_HEADER_LENGTH:], length, &cmd); err != nil {
 		log.Println(err)
 		conn.state = STATE_END
 		return false
 	}
 
-	responseLenght += messageHeaderLength
-	binary.LittleEndian.PutUint32(conn.writeBuffer[:messageHeaderLength], responseLenght)
-	binary.LittleEndian.PutUint32(conn.writeBuffer[messageHeaderLength:messageHeaderLength+4], uint32(responseCode))
-	conn.writeBufferSize = uint(responseLenght) + 4
+	var out string
+	doRequest(&cmd, &out)
 
-	remain := conn.readBufferSize - messageHeaderLength - uint(length)
-	if remain > 0 {
-		copy(conn.readBuffer[:remain], conn.readBuffer[messageHeaderLength+length:messageHeaderLength+uint(length)+remain])
+	if MESSAGE_HEADER_LENGTH+len(out) > MESSAGE_LIMIT {
+		out = ""
+		outErr(&out, ERR_2BIG, "response is too big")
 	}
+	binary.LittleEndian.PutUint32(conn.writeBuffer[:MESSAGE_HEADER_LENGTH], (uint32)(len(out)))
+	copy(conn.writeBuffer[MESSAGE_HEADER_LENGTH:MESSAGE_HEADER_LENGTH+len(out)], []byte(out))
+	conn.writeBufferSize = uint(len(out)) + 4
+	remain := conn.readBufferSize - MESSAGE_HEADER_LENGTH - uint(length)
+	if remain > 0 {
+		copy(conn.readBuffer[:remain], conn.readBuffer[MESSAGE_HEADER_LENGTH+length:MESSAGE_HEADER_LENGTH+uint(length)+remain])
+	}
+
+
+
 	conn.readBufferSize = remain
 	conn.state = STATE_RES
 	StateRes(conn)
 	return conn.state == STATE_REQ
 }
 
-func doRequest(request []byte, requestLength uint32, responseCode *int, response []byte, responseLenght *uint32) error {
-	cmd := make([]string, 0)
-	if err := parseRequest(request, requestLength, &cmd); err != nil {
-		log.Println("bad request!", err)
-		return err
-	}
-	if len(cmd) == 2 && cmd[0] == "get" {
-		*responseCode = doGet(cmd, response, responseLenght)
-	} else if len(cmd) == 3 && cmd[0] == "set" {
-		*responseCode = doSet(cmd, response, responseLenght)
-	} else if len(cmd) == 2 && cmd[0] == "del" {
-		*responseCode = doDel(cmd, response, responseLenght)
+func doRequest(cmd *[]string, out *string) {
+
+
+
+	if len(*cmd) == 1 && (*cmd)[0] == "keys" {
+		doKeys(*cmd, out)
+	} else if len(*cmd) == 2 && (*cmd)[0] == "get" {
+		doGet(*cmd, out)
+	} else if len(*cmd) == 3 && (*cmd)[0] == "set" {
+		doSet(*cmd, out)
+	} else if len(*cmd) == 2 && (*cmd)[0] == "del" {
+		doDel(*cmd, out)
 	} else {
-		*responseCode = int(RES_ERR)
-		message := "Unknown command"
-		copy(response, []byte(message))
-		*responseLenght = uint32(len(message))
-		return nil
+		outErr(out, ERR_UNKNOWN, "Unknown command")
 	}
-	return nil
 }
 
 func parseRequest(request []byte, requestLength uint32, cmd *[]string) error {
-
 	if requestLength <= 4 {
 		return errors.New("empty request")
 	}
-
-	length := binary.LittleEndian.Uint32(request[:messageHeaderLength])
-
+	length := binary.LittleEndian.Uint32(request[:MESSAGE_HEADER_LENGTH])
 	var position uint32 = 4
 	for length > 0 {
-
 		if position+4 > requestLength {
 			return errors.New("error when trying to parse message")
 		}
@@ -177,29 +187,30 @@ func parseRequest(request []byte, requestLength uint32, cmd *[]string) error {
 		position += 4 + sz
 		length -= 1
 	}
-
 	if position != requestLength {
 		return errors.New("trailing garbage after message")
 	}
 	return nil
 }
 
-func doGet(cmd []string, response []byte, responseLength *uint32) int {
+func doKeys(cmd []string, out *string) {
+	outArr(out, uint32(gmap.db.hmapSize()))
+	gmap.db.firstTab.hmapScan(cbScan, out)
+	gmap.db.secondTab.hmapScan(cbScan, out)
+}
 
+func doGet(cmd []string, out *string) {
 	node := newNode(cmd[1], "")
 	found := gmap.db.lookupNode(node, nodeComparer)
 	if found == nil {
-		return int(RES_NX)
+		outNil(out)
+	} else {
+		outStr(out, found.value)
 	}
-	if len(found.value) > messageLimit {
-		log.Println("Message too long")
-	}
-	copy(response, []byte(found.value))
-	*responseLength = uint32(len(found.value))
-	return int(RES_OK)
+
 }
 
-func doSet(cmd []string, response []byte, responseLength *uint32) int {
+func doSet(cmd []string, out *string) {
 
 	node := newNode(cmd[1], "")
 	found := gmap.db.lookupNode(node, nodeComparer)
@@ -208,12 +219,55 @@ func doSet(cmd []string, response []byte, responseLength *uint32) int {
 	} else {
 		gmap.db.insert(newNode(cmd[1], cmd[2]))
 	}
-	return int(RES_OK)
+	outNil(out)
 }
 
-func doDel(cmd []string, response []byte, responseLength *uint32) int {
+func doDel(cmd []string, out *string) {
 	node := newNode(cmd[1], "")
-	deletedNode:=gmap.db.pop(node, nodeComparer)
-	fmt.Printf("deleted node:%v\n", deletedNode)
-	return int(RES_OK)
+	deletedNode := gmap.db.pop(node, nodeComparer)
+	if deletedNode != nil {
+		outInt(out, uint64(1))
+	} else {
+		outInt(out, uint64(0))
+	}
+
+}
+
+func outNil(out *string) {
+	*out = string([]byte{byte(SER_NIL)})
+}
+
+func outStr(out *string, val string) {
+	*out += string([]byte{byte(SER_STR)})
+	buff := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buff, uint32(len(val)))
+	*out += string(buff)
+	*out += val
+}
+
+func outInt(out *string, val uint64) {
+	*out += string([]byte{byte(SER_INT)})
+	buff := make([]byte, 8)
+	binary.LittleEndian.PutUint64(buff, val)
+	*out += string(buff)
+
+}
+
+func outErr(out *string, code ErrorTypeCode, message string) {
+	*out += string([]byte{byte(SER_ERR)})
+	buff := make([]byte, 8)
+	binary.LittleEndian.PutUint32(buff[:4], uint32(code))
+	binary.LittleEndian.PutUint32(buff[4:], uint32(len(message)))
+	*out += string(buff)
+	*out += message
+
+}
+
+func outArr(out *string, n uint32) {
+	
+	*out += string([]byte{byte(SER_ARR)})
+	buff := make([]byte, 4)
+	binary.LittleEndian.PutUint32(buff, n)
+	*out += string(buff)
+
 }
